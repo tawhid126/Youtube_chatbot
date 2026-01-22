@@ -1,6 +1,3 @@
-# please make virtual enviroment and downdoles the requirements
-
-
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -8,41 +5,44 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
-from langchain_core.runnables import RunnableParallel,RunnablePassthrough,RunnableLambda
+from langchain_core.runnables import (
+    RunnableParallel,
+    RunnablePassthrough,
+    RunnableLambda,
+)
 import streamlit as st
 from typing import List
-from dotenv import load_dotenv
+import os
 
-
-load_dotenv()
+os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-
-
-# video_id = "LPZh9BOjkQs"
 
 
 def extract_video_id(url: str):
     if "v=" in url:
         return url.split("v=")[1].split("&")[0]
-    else :
-        video_id = url.split('/')[-1].split('?')[0]
+    else:
+        video_id = url.split("/")[-1].split("?")[0]
         return video_id
 
 
 def get_youtube_transcript(video_id: str):
     try:
-        transcript_list = YouTubeTranscriptApi().fetch(video_id, languages=["en"])
-        transcript_text = " ".join([item.text for item in transcript_list])
+        transcript_list = YouTubeTranscriptApi.get_transcript(
+            video_id, languages=["en", "bn", "hi"]  # ← English, Bangla, Hindi
+        )
+        transcript_text = " ".join([item["text"] for item in transcript_list])
         return transcript_text
-
     except TranscriptsDisabled:
-        return "we get no transcript"
+        return ""
+    except Exception:
+        return ""
 
 
 def text_splitter(text: str):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = text_splitter.create_documents([text])
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    chunks = splitter.create_documents([text])
     return chunks
 
 
@@ -62,29 +62,34 @@ def retriever_fn(query: str, vectorstore: FAISS):
 
 st.header("YouTube Chatbot with Gemini-2.5-flash")
 
-
 url = st.text_input("Enter the youtube url")
 query = st.text_input("Enter your question")
 
 if st.button("Find Ans"):
 
+    if not url or not query:
+        st.warning("Please enter both URL and question.")
+        st.stop()
+
     with st.spinner("Bot Is Thinking....."):
 
         video_id = extract_video_id(url)
-        
+
         transcript = get_youtube_transcript(video_id)
+        if not transcript:
+            st.error("No transcript found (or transcript disabled).")
+            st.stop()
 
         chunks = text_splitter(transcript)
 
         vectorstore = embedding_gen(chunks, embeddings)
 
-        # Create prompt template
         prompt_template = PromptTemplate(
             template="""Use the following context to answer the question.
-        If the answer is not in the context, say "I don't know".  
-        context: {context}
-        question: {question}
-        answer:""",
+                If the answer is not in the context, say "I don't know".
+                context: {context}
+                question: {question}
+                answer:""",
             input_variables=["context", "question"],
         )
 
